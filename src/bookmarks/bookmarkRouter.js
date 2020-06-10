@@ -1,45 +1,44 @@
 const express = require('express')
 const logger = require('../logger')
+const path = require('path')
 const xss = require('xss')
 const BookmarksService = require('./bookmarksService')
 
 const bookmarkRouter = express.Router()
 const bodyParser = express.json()
+const serializeBookmark = bookmark => {
+    return {id: bookmark.id,
+        title: xss(bookmark.title),
+        url: xss(bookmark.url),
+        description: xss(bookmark.description),
+        rating: xss(bookmark.rating)}
+}
 
 bookmarkRouter
-    .route('/bookmarks')
+    .route('/')
     .get((req, res, next) => {
         const knexInstance = req.app.get('db')
         BookmarksService.getAllBookmarks(knexInstance)
             .then(bookmarks => {
                 res
                     .status(200)
-                    .json(bookmarks)
+                    .json(bookmarks.map(serializeBookmark))
             })
             .catch(next)
     })
     .post(bodyParser, (req, res, next) => {
         const { title, url, description = "", rating} = req.body
+        const newBookmark = { title, url, description, rating}
         const knexInstance = req.app.get('db')
-        if(!title){
-            logger.error(`Title is required`);
-            return res
-                .status(400)
-                .send('The title is required')
-        }
-            
-        if(!url){
-            logger.error(`URL is required`);
-            return res
-                .status(400)
-                .send('The URL is required')
-        }
 
-        if(!rating){
-            logger.error('Rating is required')
+        for (const [key, value] of Object.entries(newBookmark)) {
+            if (value == null) {
             return res
                 .status(400)
-                .send('Rating is required')
+                .json({
+                    error: { message: `Missing '${key}' in request body` }
+                })
+            }
         }
 
         if(rating < 0 || rating > 5){
@@ -54,18 +53,15 @@ bookmarkRouter
                 logger.info(`Bookmark with id ${bookmark.id} created`)
                 res
                     .status(201)
-                    .location(`http://localhost:8000/bookmarks/${bookmark.id}`)
-                    .json({id: bookmark.id,
-                    title: xss(bookmark.title),
-                    url: xss(bookmark.url),
-                    description: xss(bookmark.description),
-                    rating: bookmark.rating})
+                    .location(path.posix.join(req.originalUrl, `/${bookmark.id}`))
+                    .json(serializeBookmark(bookmark))
             })
+            .catch(next)
     })
 
 bookmarkRouter
-    .route('/bookmarks/:id')
-    .get((req, res, next) => {
+    .route('/:id')
+    .all((req, res, next) => {
         const knexInstance =  req.app.get('db')
         BookmarksService.getById(knexInstance, req.params.id)
             .then(bookmark => {
@@ -75,30 +71,23 @@ bookmarkRouter
                         .status(404)
                         .json({error: {message: 'Bookmark not found'}})
                 }
-                res
-                    .status(200)
-                    .json(bookmark)
+                res.bookmark = bookmark // save the article for the next middleware
+                next() // don't forget to call next so the next middleware happens!
             })
-            .catch()
+            .catch(next)
+    })
+    .get((req, res, next) => {
+        return res.json(serializeBookmark(res.bookmark))
     })
     .delete((req, res, next) => {
         const knexInstance = req.app.get('db')
         const { id } = req.params
         
         BookmarksService.deleteBookmark(knexInstance, id)
-            .then(bookmark =>{
-                if(!bookmark){
-                    logger.error(`Bookmark with id ${bookmark.id} not found.`)
-                    return res
-                        .status(404)
-                        .send("404 Not found")
-                }
-                BookmarksService.getAllBookmarks(knexInstance)
-                    .then(bookmarks =>
-                        res.json(bookmarks)
-                    )
+            .then(numRowsAffected => {
+                res.status(204).end()
             })
-            .catch()
+            .catch(next)
     })
     .patch(bodyParser, (req, res, next) => {
         const knexInstance = req.app.get('db')
@@ -110,7 +99,7 @@ bookmarkRouter
         if (numberOfValues === 0) {
         return res.status(400).json({
             error: {
-            message: `Request body must contain either 'title', 'url' 'description' or 'rating'`
+            message: `Request body must contain at least one of the following values 'title', 'url' 'description' or 'rating'`
             }
         })
         }
@@ -120,12 +109,8 @@ bookmarkRouter
                 logger.info(`Bookmark with id ${bookmark.id} was updated`)
                 res
                     .status(204)
-                    .location(`http://localhost:8000/bookmarks/${bookmark.id}`)
-                    .json({id: bookmark.id,
-                    title: xss(bookmark.title),
-                    url: xss(bookmark.url),
-                    description: xss(bookmark.description),
-                    rating: bookmark.rating})
+                    .location(path.posix.join(req.originalUrl, `/${bookmark.id}`))
+                    .json(serializeBookmark(bookmark))
                     
             })
     })
