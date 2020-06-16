@@ -10,7 +10,7 @@ describe('testing endpoint /api/bookmarks', function(){
     before(() => {
         db = knex({
             client: 'pg',
-            connection: process.env.DB_URL_TEST
+            connection: process.env.DATABASE_URL_TEST
         })
         app.set('db', db)
     })
